@@ -1,0 +1,176 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Membership Approvals</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    h1 { margin-bottom: 16px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #ddd; text-align: left; }
+    tr:hover { background: #f8f8f8; }
+    .btn { padding: 8px 12px; border: 1px solid #ccc; background: #fff; cursor: pointer; border-radius: 6px; }
+    .btn.primary { background: #0b5fff; color: #fff; border-color: #0b5fff; }
+    .panel { border: 1px solid #eee; border-radius: 10px; padding: 14px; margin-top: 14px; }
+    .candidate { display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid #eee; border-radius: 8px; margin: 6px 0; }
+    .muted { color: #666; font-size: 0.9em; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    input[type="text"], input[type="email"], input[type="password"] { padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Membership Approvals</h1>
+
+  <div id="login">
+    <p>Staff email:</p>
+    <input id="email" type="email" placeholder="you@crostonsportsclub.co.uk" />
+    <button class="btn primary" onclick="login()">Login</button>
+    <p class="muted">Allowed users are set in the app setting <code>ADMIN_EMAILS</code>.</p>
+    <hr/>
+  </div>
+
+  <div id="list" style="display:none;"></div>
+
+  <div id="detail" style="display:none;">
+    <h2 id="memberName"></h2>
+    <div class="grid">
+      <div class="panel">
+        <h3>Order details</h3>
+        <div id="order"></div>
+        <div style="margin-top:8px;">
+          <label>Notes<br><textarea id="notes" rows="3" style="width:100%;"></textarea></label>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Suggested matches</h3>
+        <form id="matchForm"></form>
+        <div style="margin-top:8px;">
+          <label>Or enter Card No:&nbsp;<input type="text" id="providedCardNo" placeholder="(optional)"></label>
+        </div>
+        <div style="margin-top:8px;">
+          <label><input type="checkbox" id="createNew"> Create new customer instead</label>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px;">
+      <button class="btn" onclick="backToList()">Back</button>
+      <button class="btn primary" id="approveBtn">Approve</button>
+      <button class="btn" id="rejectBtn">Reject</button>
+    </div>
+  </div>
+
+<script>
+const API = '';
+let token = '';
+
+async function api(path, opts={}) {
+  const res = await fetch(path, Object.assign({
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }
+  }, opts));
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function login() {
+  const email = document.getElementById('email').value.trim();
+  const res = await api('/api/login', { method: 'POST', body: JSON.stringify({ email }) });
+  token = res.token;
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('list').style.display = 'block';
+  loadList();
+}
+
+async function loadList() {
+  const rows = await api('/api/staging?status=Pending');
+  const el = document.getElementById('list');
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Order</th><th>Name</th><th>Email</th><th>Product</th><th>Term</th><th>Price</th><th>Received</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td>#${r.OrderId}</td>
+            <td>${r.CustomerFirstName} ${r.CustomerLastName}</td>
+            <td>${r.Email || ''}</td>
+            <td>${r.MembershipProductName}</td>
+            <td>${r.TermMonths} mo</td>
+            <td>£${Number(r.PricePaid).toFixed(2)}</td>
+            <td>${new Date(r.CreatedAt).toLocaleString()}</td>
+            <td><button class="btn" onclick="openDetail('${r.StagingId}')">Review</button></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+let current;
+async function openDetail(id) {
+  current = await api(`/api/staging/${id}`);
+  document.getElementById('memberName').textContent =
+    `${current.staging.CustomerFirstName} ${current.staging.CustomerLastName}`;
+  document.getElementById('order').innerHTML = `
+    <div class="muted">Order #${current.staging.OrderId}</div>
+    <div>${current.staging.Email || ''} · ${current.staging.Phone || ''}</div>
+    <div>${current.staging.MembershipProductName} · ${current.staging.TermMonths} months</div>
+  `;
+  const form = document.getElementById('matchForm');
+  const cands = current.candidates || [];
+  form.innerHTML = `
+    ${cands.map(c => `
+      <label class="candidate">
+        <input type="radio" name="match" value="${c.CustomerID}">
+        <div>
+          <div><strong>${c.MemberNumber || '—'}</strong> — ${c.FirstName} ${c.LastName}</div>
+          <div class="muted">${c.Email || ''} · ${c.Mobile || c.TelNo || ''} · Expiry: ${c.ExpiryDate ? c.ExpiryDate.substring(0,10) : '—'}</div>
+        </div>
+      </label>
+    `).join('')}
+    <label class="candidate">
+      <input type="radio" name="match" value="">
+      <div><strong>Create new member</strong> (or tick the box below)</div>
+    </label>
+  `;
+  document.getElementById('list').style.display = 'none';
+  document.getElementById('detail').style.display = 'block';
+
+  document.getElementById('approveBtn').onclick = approveCurrent;
+  document.getElementById('rejectBtn').onclick = rejectCurrent;
+}
+
+function backToList() {
+  document.getElementById('detail').style.display = 'none';
+  document.getElementById('list').style.display = 'block';
+  loadList();
+}
+
+async function approveCurrent() {
+  const chosen = document.querySelector('input[name="match"]:checked');
+  const chosenCustomerID = chosen && chosen.value ? Number(chosen.value) : null;
+  const providedCardNo = (document.getElementById('providedCardNo').value || '').trim() || null;
+  const createNew = document.getElementById('createNew').checked;
+
+  const res = await api(`/api/staging/${current.staging.StagingId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ chosenCustomerID, providedCardNo, createNew })
+  });
+  alert(`Approved\nCustomerID: ${res.customerID}\nMember No: ${res.cardNo}`);
+  backToList();
+}
+
+async function rejectCurrent() {
+  const reason = prompt('Reason for rejection?') || '';
+  await api(`/api/staging/${current.staging.StagingId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+  });
+  alert('Rejected');
+  backToList();
+}
+</script>
+</body>
+</html>
